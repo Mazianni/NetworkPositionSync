@@ -24,11 +24,10 @@ SOFTWARE.
 
 using System;
 using System.Runtime.CompilerServices;
+using Godot;
 using Mirage;
 using Mirage.Logging;
 using Mirage.Serialization;
-using Godot;
-using System.Threading.Tasks;
 
 namespace JamesFrowen.PositionSync
 {
@@ -169,7 +168,8 @@ namespace JamesFrowen.PositionSync
             get => clientAuthority && Identity.HasAuthority;
         }
 
-        [Export] private Vector2 Position
+        [Export]
+        private Vector2 Position
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
@@ -183,7 +183,8 @@ namespace JamesFrowen.PositionSync
             }
         }
 
-        [Export] private float Rotation
+        [Export]
+        private float Rotation
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
@@ -256,13 +257,11 @@ namespace JamesFrowen.PositionSync
         public override void _Ready()
         {
             base._Ready();
-            FindSystem();
             Identity.OnStartClient.AddListener(OnStartClient);
             Identity.OnStopClient.AddListener(OnStopClient);
 
             Identity.OnStartServer.AddListener(OnStartServer);
             Identity.OnStopServer.AddListener(OnStopServer);
-            FindSystem();
             OnValidate();
 
         }
@@ -293,13 +292,11 @@ namespace JamesFrowen.PositionSync
             // dont add twice in host mode
             if (Identity.IsServer) return;
             FindSystem();
-            _system.Behaviours.AddBehaviour(this);
         }
 
         public void OnStartServer()
         {
             FindSystem();
-            _system.Behaviours.AddBehaviour(this);
         }
 
         public void OnStopClient()
@@ -326,11 +323,6 @@ namespace JamesFrowen.PositionSync
         public override void _Process(double delta)
         {
             base._Process(delta);
-            if (_system == null) FindSystem();
-            if (_system.Behaviours.Dictionary.Count == 0)
-            {
-                _system.Behaviours.AddBehaviour(this);
-            }
             if (Identity.IsClient)
             {
                 if (IsLocalClientInControl)
