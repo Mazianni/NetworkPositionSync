@@ -131,7 +131,7 @@ namespace JamesFrowen.PositionSync
         SendToDirtyObservers_PackOnce = 4,
     }
 
-    //[AddComponentMenu("Network/SyncPosition/SyncPositionSystem")]
+    [GlobalClass]
     public partial class SyncPositionSystem : Node
     {
         private static readonly ILogger logger = LogFactory.GetLogger<SyncPositionSystem>();
