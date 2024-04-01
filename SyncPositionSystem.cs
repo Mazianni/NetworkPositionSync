@@ -26,52 +26,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using Godot;
 using Mirage;
 using Mirage.Logging;
 using Mirage.Serialization;
-using Godot;
 
 namespace JamesFrowen.PositionSync
 {
-    public static class Benchmark
-    {
-        private static long[] frames;
-        private static int index;
-        private static bool isRecording;
-        private static long start;
-
-        public static event Action<long[]> RecordingFinished;
-
-        public static bool IsRecording => isRecording;
-
-        public static void StartRecording(int frameCount)
-        {
-            frames = new long[frameCount];
-            isRecording = true;
-            index = 0;
-        }
-
-        public static void StartFrame()
-        {
-            if (!isRecording) return;
-
-            start = Stopwatch.GetTimestamp();
-        }
-        public static void EndFrame()
-        {
-            if (!isRecording) return;
-
-            var end = Stopwatch.GetTimestamp();
-            frames[index] = end - start;
-            index++;
-            if (index >= frames.Length)
-            {
-                RecordingFinished?.Invoke(frames);
-                isRecording = false;
-            }
-        }
-    }
-
     public class SyncPositionBehaviourCollection
     {
         private static readonly ILogger logger = LogFactory.GetLogger<SyncPositionBehaviourCollection>();
@@ -89,7 +50,7 @@ namespace JamesFrowen.PositionSync
 
         public bool TryGetValue(NetworkBehaviour.Id id, out SyncPositionBehaviour value)
         {
-           // UnityEngine.Debug.Assert(!_includeComponentIndex || id.ComponentIndex == 0, "ComponentIndex was not zero when _includeComponentIndex was disabled");
+            // UnityEngine.Debug.Assert(!_includeComponentIndex || id.ComponentIndex == 0, "ComponentIndex was not zero when _includeComponentIndex was disabled");
             return _behaviours.TryGetValue(id, out value);
         }
 
@@ -125,13 +86,10 @@ namespace JamesFrowen.PositionSync
     public enum SyncMode
     {
         SendToAll = 1,
-        SendToObservers_PlayerDirty = 2,
-        SendToObservers_PlayerDirty_PackOnce = 5,
-        SendToObservers_DirtyObservers = 3,
-        SendToDirtyObservers_PackOnce = 4,
+        SendToObservers = 2,
     }
 
-    //[AddComponentMenu("Network/SyncPosition/SyncPositionSystem")]
+    [GlobalClass]
     public partial class SyncPositionSystem : Node
     {
         private static readonly ILogger logger = LogFactory.GetLogger<SyncPositionSystem>();
@@ -254,7 +212,7 @@ namespace JamesFrowen.PositionSync
                 return;
 
             syncTimer += timer.Delta;
-            // fixed atmost once a frame
+            // fixed at most once a frame
             // but always SyncRate per second
             if (syncTimer > FixedSyncInterval)
             {
@@ -280,27 +238,16 @@ namespace JamesFrowen.PositionSync
         {
             if (!ServerActive) return;
 
-            Benchmark.StartFrame();
             // syncs every frame, each Behaviour will track its own timer
             switch (syncMode)
             {
                 case SyncMode.SendToAll:
                     SendUpdateToAll(time);
                     break;
-                case SyncMode.SendToObservers_PlayerDirty:
-                    SendUpdateToObservers_PlayerDirty(time);
-                    break;
-                case SyncMode.SendToObservers_PlayerDirty_PackOnce:
-                    SendUpdateToObservers_PlayerDirty_PackOnce(time);
-                    break;
-                case SyncMode.SendToObservers_DirtyObservers:
-                    SendUpdateToObservers_DirtyObservers(time);
-                    break;
-                case SyncMode.SendToDirtyObservers_PackOnce:
+                case SyncMode.SendToObservers:
                     SendUpdateToObservers_DirtyObservers_PackOnce(time);
                     break;
             }
-            Benchmark.EndFrame();
 
             // host mode
             // todo do we need this?
@@ -347,139 +294,6 @@ namespace JamesFrowen.PositionSync
                 };
                 Server.SendToAll(msg, excludeLocalPlayer: true, MessageChannel);
             }
-        }
-
-        /// <summary>
-        /// Loops through all players, followed by all dirty objects and checks if the player object can see each one
-        /// </summary>
-        /// <param name="time"></param>
-        internal void SendUpdateToObservers_PlayerDirty(double time)
-        {
-            // dont send message if no behaviours
-            if (Behaviours.Dictionary.Count == 0)
-                return;
-
-            UpdateDirtySet();
-
-            using (var writer = NetworkWriterPool.GetWriter())
-            {
-                foreach (var player in Server.Players)
-                {
-                    writer.Reset();
-
-                    packer.PackTime(writer, time);
-                    foreach (var behaviour in dirtySet)
-                    {
-                        if (!behaviour.Identity.observers.Contains(player))
-                            continue;
-
-                        packer.PackNext(writer, behaviour);
-                    }
-
-                    var msg = new NetworkPositionMessage
-                    {
-                        payload = writer.ToArraySegment()
-                    };
-                    player.Send(msg, MessageChannel);
-                }
-            }
-
-            ClearDirtySet();
-        }
-
-        /// <summary>
-        /// Loops through all players, followed by all dirty objects and checks if the player object can see each one
-        /// ...except this one packs data once.
-        /// </summary>
-        /// <param name="time"></param>
-        internal void SendUpdateToObservers_PlayerDirty_PackOnce(double time)
-        {
-            // dont send message if no behaviours
-            if (Behaviours.Dictionary.Count == 0)
-                return;
-
-            UpdateDirtySet();
-            NetworkWriterPool.Configure(100, 200);
-
-            using (var writer = NetworkWriterPool.GetWriter())
-            {
-                foreach (var player in Server.Players)
-                {
-                    writer.Reset();
-
-                    packer.PackTime(writer, time);
-                    foreach (var behaviour in dirtySet)
-                    {
-                        if (!behaviour.Identity.observers.Contains(player))
-                            continue;
-
-                        var packed = GetWriterFromPool_Behaviours(behaviour);
-                        writer.CopyFromWriter(packed);
-                    }
-
-                    var msg = new NetworkPositionMessage
-                    {
-                        payload = writer.ToArraySegment()
-                    };
-                    player.Send(msg, MessageChannel);
-                }
-            }
-
-            foreach (var writer in writerPool_Behaviours.Values)
-                writer.Release();
-
-            writerPool_Behaviours.Clear();
-
-            ClearDirtySet();
-        }
-
-        private Dictionary<SyncPositionBehaviour, PooledNetworkWriter> writerPool_Behaviours = new Dictionary<SyncPositionBehaviour, PooledNetworkWriter>();
-
-        private PooledNetworkWriter GetWriterFromPool_Behaviours(SyncPositionBehaviour behaviour)
-        {
-            if (!writerPool_Behaviours.TryGetValue(behaviour, out var writer))
-            {
-                writer = NetworkWriterPool.GetWriter();
-                writerPool_Behaviours[behaviour] = writer;
-                packer.PackNext(writer, behaviour);
-            }
-
-            return writer;
-        }
-
-        /// <summary>
-        /// Loops through all dirty objects, and then their observers and then writes that behaviouir to a cahced writer
-        /// </summary>
-        /// <param name="time"></param>
-        internal void SendUpdateToObservers_DirtyObservers(double time)
-        {
-            // dont send message if no behaviours
-            if (Behaviours.Dictionary.Count == 0)
-                return;
-
-            UpdateDirtySet();
-
-            foreach (var behaviour in dirtySet)
-            {
-                foreach (var observer in behaviour.Identity.observers)
-                {
-                    var writer = GetWriterFromPool(time, observer);
-
-                    packer.PackNext(writer, behaviour);
-                }
-            }
-
-            foreach (var player in Server.Players)
-            {
-                var writer = GetWriterFromPool(time, player);
-
-                var msg = new NetworkPositionMessage { payload = writer.ToArraySegment() };
-                player.Send(msg, MessageChannel);
-                writer.Release();
-            }
-            writerPool.Clear();
-
-            ClearDirtySet();
         }
 
         /// <summary>
